@@ -28,6 +28,17 @@ from backend.database.mongodb import (
     system_settings_collection,
     academic_records_collection
 )
+from backend.services.bulk_upload_service import (
+    generate_student_template_excel,
+    generate_student_template_csv,
+    generate_faculty_template_excel,
+    generate_faculty_template_csv,
+    parse_and_validate_student_file,
+    parse_and_validate_faculty_file,
+    confirm_student_import,
+    confirm_faculty_import,
+    generate_error_report
+)
 from backend.config import Config
 
 admin_bp = Blueprint('admin', __name__)
@@ -555,6 +566,104 @@ def get_admin_student_details(student_id):
     }), 200
 
 
+# ─── 2b. Student Bulk Upload Endpoints ───────────────────────────────────────────
+@admin_bp.route('/students/template', methods=['GET'])
+@role_required('Admin')
+def download_student_template():
+    """Download official template for bulk student enrollment (.xlsx or .csv)."""
+    fmt = (request.args.get('format') or 'xlsx').lower()
+    try:
+        if fmt == 'csv':
+            stream = generate_student_template_csv()
+            filename = 'student_bulk_upload_template.csv'
+            mimetype = 'text/csv'
+        else:
+            stream = generate_student_template_excel()
+            filename = 'student_bulk_upload_template.xlsx'
+            mimetype = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
+        return send_file(
+            stream,
+            as_attachment=True,
+            download_name=filename,
+            mimetype=mimetype
+        )
+    except Exception as e:
+        return jsonify({'success': False, 'error': f"Failed to generate template: {str(e)}"}), 500
+
+
+@admin_bp.route('/students/bulk-upload/preview', methods=['POST'])
+@admin_bp.route('/students/upload', methods=['POST'])
+@role_required('Admin')
+def preview_student_bulk_upload():
+    """Upload and validate student spreadsheet (.xlsx or .csv) without modifying database."""
+    file = request.files.get('file') or request.files.get('excel') or request.files.get('spreadsheet')
+    if not file or not file.filename:
+        return jsonify({'success': False, 'error': 'No file uploaded. Please upload a .xlsx or .csv spreadsheet.'}), 400
+
+    orig_filename = secure_filename(file.filename) or 'students_upload.xlsx'
+    ext = orig_filename.rsplit('.', 1)[-1].lower() if '.' in orig_filename else ''
+    if ext not in ['xlsx', 'xls', 'csv']:
+        return jsonify({'success': False, 'error': f"Unsupported file extension '.{ext}'. Only .xlsx, .xls, and .csv files are supported."}), 400
+
+    try:
+        # Check size limit: 10MB
+        file_bytes = io.BytesIO(file.read())
+        if file_bytes.getbuffer().nbytes > 10 * 1024 * 1024:
+            return jsonify({'success': False, 'error': 'File size exceeds maximum limit of 10MB.'}), 400
+
+        result = parse_and_validate_student_file(file_bytes, orig_filename)
+        status_code = 200 if result.get('success') else 400
+        return jsonify(result), status_code
+    except Exception as e:
+        return jsonify({'success': False, 'error': f"Error parsing student spreadsheet: {str(e)}"}), 500
+
+
+@admin_bp.route('/students/bulk-upload/confirm', methods=['POST'])
+@admin_bp.route('/students/confirm', methods=['POST'])
+@role_required('Admin')
+def confirm_student_bulk_upload():
+    """Confirm previewed student records, create accounts, hash passwords, and connect records."""
+    data = request.get_json(silent=True) or {}
+    preview_token = data.get('preview_token')
+    if not preview_token:
+        return jsonify({'success': False, 'error': 'Missing preview token. Please re-upload your file.'}), 400
+
+    try:
+        curr = getattr(request, 'current_user', {}) or {}
+        res = confirm_student_import(preview_token, curr)
+        if res.get('success'):
+            _log_admin_action(curr, 'STUDENTS_BULK_IMPORTED', f"Bulk imported {res.get('imported_count')} students into database.")
+        status_code = 200 if res.get('success') else 400
+        return jsonify(res), status_code
+    except Exception as e:
+        return jsonify({'success': False, 'error': f"Import execution failed: {str(e)}"}), 500
+
+
+@admin_bp.route('/students/bulk-upload/error-report/<preview_token>', methods=['GET'])
+@admin_bp.route('/students/bulk-upload/error-report', methods=['GET', 'POST'])
+@role_required('Admin')
+def download_student_error_report(preview_token=None):
+    """Download sanitized spreadsheet error report for student bulk upload."""
+    token = preview_token or request.args.get('preview_token')
+    if not token and request.is_json:
+        token = (request.get_json(silent=True) or {}).get('preview_token')
+
+    if not token:
+        return jsonify({'success': False, 'error': 'Preview token is required.'}), 400
+
+    fmt = (request.args.get('format') or 'xlsx').lower()
+    try:
+        stream, filename, err = generate_error_report(token, format_type=fmt)
+        if err or not stream:
+            return jsonify({'success': False, 'error': err or 'Unable to generate error report.'}), 400
+
+        mimetype = 'text/csv' if fmt == 'csv' else 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        return send_file(stream, as_attachment=True, download_name=filename, mimetype=mimetype)
+    except Exception as e:
+        return jsonify({'success': False, 'error': f"Failed to generate error report: {str(e)}"}), 500
+
+
 # ─── 3. Faculty Management ───────────────────────────────────────────────────────
 @admin_bp.route('/faculty', methods=['GET'])
 @role_required('Admin')
@@ -754,6 +863,103 @@ def toggle_admin_faculty_status(faculty_id):
         'message': f"Faculty member status updated to {new_status}.",
         'status': new_status
     }), 200
+
+
+# ─── 3b. Faculty Bulk Upload Endpoints ───────────────────────────────────────────
+@admin_bp.route('/faculty/template', methods=['GET'])
+@role_required('Admin')
+def download_faculty_template():
+    """Download official template for bulk faculty enrollment (.xlsx or .csv)."""
+    fmt = (request.args.get('format') or 'xlsx').lower()
+    try:
+        if fmt == 'csv':
+            stream = generate_faculty_template_csv()
+            filename = 'faculty_bulk_upload_template.csv'
+            mimetype = 'text/csv'
+        else:
+            stream = generate_faculty_template_excel()
+            filename = 'faculty_bulk_upload_template.xlsx'
+            mimetype = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
+        return send_file(
+            stream,
+            as_attachment=True,
+            download_name=filename,
+            mimetype=mimetype
+        )
+    except Exception as e:
+        return jsonify({'success': False, 'error': f"Failed to generate template: {str(e)}"}), 500
+
+
+@admin_bp.route('/faculty/bulk-upload/preview', methods=['POST'])
+@admin_bp.route('/faculty/upload', methods=['POST'])
+@role_required('Admin')
+def preview_faculty_bulk_upload():
+    """Upload and validate faculty spreadsheet (.xlsx or .csv) without modifying database."""
+    file = request.files.get('file') or request.files.get('excel') or request.files.get('spreadsheet')
+    if not file or not file.filename:
+        return jsonify({'success': False, 'error': 'No file uploaded. Please upload a .xlsx or .csv spreadsheet.'}), 400
+
+    orig_filename = secure_filename(file.filename) or 'faculty_upload.xlsx'
+    ext = orig_filename.rsplit('.', 1)[-1].lower() if '.' in orig_filename else ''
+    if ext not in ['xlsx', 'xls', 'csv']:
+        return jsonify({'success': False, 'error': f"Unsupported file extension '.{ext}'. Only .xlsx, .xls, and .csv files are supported."}), 400
+
+    try:
+        file_bytes = io.BytesIO(file.read())
+        if file_bytes.getbuffer().nbytes > 10 * 1024 * 1024:
+            return jsonify({'success': False, 'error': 'File size exceeds maximum limit of 10MB.'}), 400
+
+        result = parse_and_validate_faculty_file(file_bytes, orig_filename)
+        status_code = 200 if result.get('success') else 400
+        return jsonify(result), status_code
+    except Exception as e:
+        return jsonify({'success': False, 'error': f"Error parsing faculty spreadsheet: {str(e)}"}), 500
+
+
+@admin_bp.route('/faculty/bulk-upload/confirm', methods=['POST'])
+@admin_bp.route('/faculty/confirm', methods=['POST'])
+@role_required('Admin')
+def confirm_faculty_bulk_upload():
+    """Confirm previewed faculty records and create accounts."""
+    data = request.get_json(silent=True) or {}
+    preview_token = data.get('preview_token')
+    if not preview_token:
+        return jsonify({'success': False, 'error': 'Missing preview token. Please re-upload your file.'}), 400
+
+    try:
+        curr = getattr(request, 'current_user', {}) or {}
+        res = confirm_faculty_import(preview_token, curr)
+        if res.get('success'):
+            _log_admin_action(curr, 'FACULTY_BULK_IMPORTED', f"Bulk imported {res.get('imported_count')} faculty members into database.")
+        status_code = 200 if res.get('success') else 400
+        return jsonify(res), status_code
+    except Exception as e:
+        return jsonify({'success': False, 'error': f"Import execution failed: {str(e)}"}), 500
+
+
+@admin_bp.route('/faculty/bulk-upload/error-report/<preview_token>', methods=['GET'])
+@admin_bp.route('/faculty/bulk-upload/error-report', methods=['GET', 'POST'])
+@role_required('Admin')
+def download_faculty_error_report(preview_token=None):
+    """Download sanitized spreadsheet error report for faculty bulk upload."""
+    token = preview_token or request.args.get('preview_token')
+    if not token and request.is_json:
+        token = (request.get_json(silent=True) or {}).get('preview_token')
+
+    if not token:
+        return jsonify({'success': False, 'error': 'Preview token is required.'}), 400
+
+    fmt = (request.args.get('format') or 'xlsx').lower()
+    try:
+        stream, filename, err = generate_error_report(token, format_type=fmt)
+        if err or not stream:
+            return jsonify({'success': False, 'error': err or 'Unable to generate error report.'}), 400
+
+        mimetype = 'text/csv' if fmt == 'csv' else 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        return send_file(stream, as_attachment=True, download_name=filename, mimetype=mimetype)
+    except Exception as e:
+        return jsonify({'success': False, 'error': f"Failed to generate error report: {str(e)}"}), 500
 
 
 # ─── 4. OD Requests Management (View-Only, Non-Bypass) ───────────────────────────

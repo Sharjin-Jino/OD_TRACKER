@@ -2328,3 +2328,279 @@ export async function apiCIExportFailedReport(failed_rows: any[], upload_type = 
     return { success: false, error: err.message || 'Failed to download failed rows report.' };
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Admin Student & Faculty Bulk Upload APIs
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface BulkUploadRowPreview {
+  row_number: number;
+  roll_number?: string;
+  faculty_id?: string;
+  name: string;
+  username: string;
+  email: string;
+  department: string;
+  section?: string;
+  year?: string;
+  semester?: string;
+  designation?: string;
+  role?: string;
+  has_custom_password: boolean;
+  password_preview: string;
+  validation_status: 'VALID' | 'INVALID' | 'DUPLICATE';
+  errors: string[];
+}
+
+export interface BulkUploadSummary {
+  total_rows: number;
+  valid_rows: number;
+  invalid_rows: number;
+  duplicate_rows: number;
+}
+
+export interface BulkValidationError {
+  row: number;
+  identifier: string;
+  name: string;
+  email: string;
+  reason: string;
+}
+
+export interface BulkUploadPreviewResponse {
+  success: boolean;
+  preview_token?: string;
+  filename?: string;
+  summary?: BulkUploadSummary;
+  rows?: BulkUploadRowPreview[];
+  errors?: BulkValidationError[];
+  error?: string;
+  message?: string;
+}
+
+export interface BulkUploadConfirmResponse {
+  success: boolean;
+  message?: string;
+  imported_count?: number;
+  skipped_count?: number;
+  failed_count?: number;
+  total_processed?: number;
+  imported_rolls?: string[];
+  imported_ids?: string[];
+  error?: string;
+}
+
+export async function apiDownloadStudentBulkTemplate(format: 'xlsx' | 'csv' = 'xlsx', token?: string) {
+  try {
+    const activeToken = resolveStoredToken(token);
+    const headers: Record<string, string> = {};
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/admin/students/template?format=${format}`, {
+      method: 'GET',
+      headers,
+      credentials: 'include',
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      return { success: false, error: err.error || 'Failed to download student template.' };
+    }
+
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `student_bulk_upload_template.${format}`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Network error downloading template.' };
+  }
+}
+
+export async function apiUploadStudentBulkFile(file: File, token?: string): Promise<BulkUploadPreviewResponse> {
+  try {
+    const activeToken = resolveStoredToken(token);
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const headers: Record<string, string> = {};
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/admin/students/bulk-upload/preview`, {
+      method: 'POST',
+      headers,
+      body: formData,
+      credentials: 'include',
+    });
+
+    const data = await res.json().catch(() => ({ success: false, error: 'Failed to parse response.' }));
+    return data;
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to upload student spreadsheet.' };
+  }
+}
+
+export async function apiConfirmStudentBulkUpload(previewToken: string, token?: string): Promise<BulkUploadConfirmResponse> {
+  try {
+    const activeToken = resolveStoredToken(token);
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/admin/students/bulk-upload/confirm`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ preview_token: previewToken }),
+      credentials: 'include',
+    });
+
+    const data = await res.json().catch(() => ({ success: false, error: 'Failed to parse response.' }));
+    return data;
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to confirm student import.' };
+  }
+}
+
+export async function apiDownloadStudentBulkErrorReport(previewToken: string, format: 'xlsx' | 'csv' = 'xlsx', token?: string) {
+  try {
+    const activeToken = resolveStoredToken(token);
+    const headers: Record<string, string> = {};
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/admin/students/bulk-upload/error-report/${encodeURIComponent(previewToken)}?format=${format}`, {
+      method: 'GET',
+      headers,
+      credentials: 'include',
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      return { success: false, error: err.error || 'Failed to download error report.' };
+    }
+
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `student_upload_errors.${format}`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Network error downloading error report.' };
+  }
+}
+
+export async function apiDownloadFacultyBulkTemplate(format: 'xlsx' | 'csv' = 'xlsx', token?: string) {
+  try {
+    const activeToken = resolveStoredToken(token);
+    const headers: Record<string, string> = {};
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/admin/faculty/template?format=${format}`, {
+      method: 'GET',
+      headers,
+      credentials: 'include',
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      return { success: false, error: err.error || 'Failed to download faculty template.' };
+    }
+
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `faculty_bulk_upload_template.${format}`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Network error downloading template.' };
+  }
+}
+
+export async function apiUploadFacultyBulkFile(file: File, token?: string): Promise<BulkUploadPreviewResponse> {
+  try {
+    const activeToken = resolveStoredToken(token);
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const headers: Record<string, string> = {};
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/admin/faculty/bulk-upload/preview`, {
+      method: 'POST',
+      headers,
+      body: formData,
+      credentials: 'include',
+    });
+
+    const data = await res.json().catch(() => ({ success: false, error: 'Failed to parse response.' }));
+    return data;
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to upload faculty spreadsheet.' };
+  }
+}
+
+export async function apiConfirmFacultyBulkUpload(previewToken: string, token?: string): Promise<BulkUploadConfirmResponse> {
+  try {
+    const activeToken = resolveStoredToken(token);
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/admin/faculty/bulk-upload/confirm`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ preview_token: previewToken }),
+      credentials: 'include',
+    });
+
+    const data = await res.json().catch(() => ({ success: false, error: 'Failed to parse response.' }));
+    return data;
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to confirm faculty import.' };
+  }
+}
+
+export async function apiDownloadFacultyBulkErrorReport(previewToken: string, format: 'xlsx' | 'csv' = 'xlsx', token?: string) {
+  try {
+    const activeToken = resolveStoredToken(token);
+    const headers: Record<string, string> = {};
+    if (activeToken) headers['Authorization'] = `Bearer ${activeToken}`;
+
+    const res = await fetch(`${API_BASE}/admin/faculty/bulk-upload/error-report/${encodeURIComponent(previewToken)}?format=${format}`, {
+      method: 'GET',
+      headers,
+      credentials: 'include',
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      return { success: false, error: err.error || 'Failed to download error report.' };
+    }
+
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `faculty_upload_errors.${format}`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Network error downloading error report.' };
+  }
+}
+

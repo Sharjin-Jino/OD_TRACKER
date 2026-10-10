@@ -54,30 +54,30 @@ def test_all():
     print("\n--- Testing Bug 1: Student Dashboard & Session Isolation ---")
 
     # 1.1 Roll number alone must NOT authenticate
-    res = request("POST", "/api/auth/login", data={"identifier": "23CSD001"})
+    res = request("POST", "/api/auth/login", data={"identifier": "241701038"})
     assert res["status"] in [400, 401], f"Expected 400/401 for missing password, got {res['status']}"
     log("1.1 Roll number alone without password rejected (400/401)", "PASS")
 
     # 1.2 Wrong password must NOT authenticate
-    res = request("POST", "/api/auth/login", data={"identifier": "23CSD001", "password": "wrongpassword!"})
+    res = request("POST", "/api/auth/login", data={"identifier": "241701038", "password": "wrongpassword!"})
     assert res["status"] == 401, f"Expected 401 for wrong password, got {res['status']}"
     log("1.2 Wrong password rejected (401)", "PASS")
 
-    # 1.3 Login as Student A (23CSD001 - Naveen)
-    res_a = request("POST", "/api/auth/login", data={"identifier": "23CSD001", "password": "password123"})
+    # 1.3 Login as Student A (241701038 - Naveen)
+    res_a = request("POST", "/api/auth/login", data={"identifier": "241701038", "password": "password123"})
     assert res_a["status"] == 200, f"Login as Student A failed: {res_a}"
     token_a = res_a["json"]["token"]
     user_a = res_a["json"]["user"]
-    assert user_a["identifier"] == "23CSD001", f"Unexpected identifier for Student A: {user_a}"
+    assert user_a["identifier"] == "241701038", f"Unexpected identifier for Student A: {user_a}"
     log(f"1.3 Logged in as Student A (Name: {user_a['name']}, ID: {user_a['identifier']})", "PASS")
 
     # Fetch Student A profile and academic data
     headers_a = {"Authorization": f"Bearer {token_a}"}
     me_a = request("GET", "/api/auth/me", headers=headers_a)
-    assert me_a["json"]["user"]["identifier"] == "23CSD001" and "Naveen" in me_a["json"]["user"]["name"]
+    assert me_a["json"]["user"]["identifier"] == "241701038" and "Naveen" in me_a["json"]["user"]["name"]
 
     acad_a = request("GET", "/api/academic/me", headers=headers_a)
-    assert acad_a["json"]["success"] is True and acad_a["json"]["data"]["register_no"] == "23CSD001"
+    assert acad_a["json"]["success"] is True and acad_a["json"]["data"]["register_no"] == "241701038"
     log("1.4 Student A verified /api/auth/me and /api/academic/me return Student A data", "PASS")
 
     # 1.4 Login as Student B (23CSD002 - Priya S)
@@ -138,7 +138,7 @@ def test_all():
     dup_res = request(
         "PUT",
         f"/api/admin/students/{stud3_id}",
-        data={"email": "naveen.23csd@rajalakshmi.edu.in"},
+        data={"email": "priya.23csd@rajalakshmi.edu.in"},
         headers=headers_admin
     )
     assert dup_res["status"] == 409, f"Expected 409 Conflict for duplicate email, got {dup_res['status']}: {dup_res}"

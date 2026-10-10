@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   GraduationCap, Search, Filter, Plus, Edit2, 
   UserCheck, UserX, Eye, BookOpen, Clock, 
-  Award, X, Check, AlertCircle, RefreshCw, Layers
+  Award, X, Check, AlertCircle, RefreshCw, Layers, Upload
 } from 'lucide-react';
 import { 
   apiGetAdminStudents, apiCreateAdminStudent, 
@@ -11,6 +11,7 @@ import {
 } from '../../services/api';
 import { useToast } from '../../components/Toast';
 import { StatusBadge } from '../../components/StatusBadge';
+import { AdminBulkUpload } from '../../components/AdminBulkUpload';
 
 export const AdminStudents: React.FC = () => {
   const { showToast } = useToast();
@@ -24,6 +25,7 @@ export const AdminStudents: React.FC = () => {
   const [department, setDepartment] = useState('');
   const [year, setYear] = useState('');
   const [status, setStatus] = useState('');
+  const [activeTab, setActiveTab] = useState<'roster' | 'bulk_upload'>('roster');
 
   // Modals
   const [isAddOpen, setIsAddOpen] = useState(false);
@@ -193,7 +195,7 @@ export const AdminStudents: React.FC = () => {
     <div className="space-y-6">
       
       {/* Header & Action Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200/90 shadow-sm">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200/90 shadow-sm">
         <div>
           <div className="flex items-center gap-2">
             <div className="p-2 rounded-xl bg-blue-50 text-blue-600">
@@ -206,17 +208,57 @@ export const AdminStudents: React.FC = () => {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={handleOpenAdd}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-all shadow-md shadow-amber-600/20 cursor-pointer self-start sm:self-auto"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Add New Student</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2.5">
+          {/* Tab Switcher */}
+          <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200/80">
+            <button
+              type="button"
+              onClick={() => setActiveTab('roster')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'roster'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Students Roster ({students.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('bulk_upload')}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'bulk_upload'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Upload className="w-3.5 h-3.5 text-amber-600" />
+              <span>Bulk Upload Students</span>
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleOpenAdd}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-all shadow-md shadow-amber-600/20 cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Add Student</span>
+          </button>
+        </div>
       </div>
 
-      {/* Filter and Search Controls */}
+      {activeTab === 'bulk_upload' && (
+        <AdminBulkUpload
+          entityType="student"
+          onSuccess={loadStudents}
+          onSwitchToRoster={() => setActiveTab('roster')}
+        />
+      )}
+
+      {/* Tab 1: Students Roster */}
+      {activeTab === 'roster' && (
+        <div className="space-y-6">
+          {/* Filter and Search Controls */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-sm space-y-3">
         <form onSubmit={handleSearchSubmit} className="flex flex-col sm:flex-row gap-3">
           <div className="relative flex-1">
@@ -381,6 +423,8 @@ export const AdminStudents: React.FC = () => {
           </table>
         </div>
       </div>
+    </div>
+  )}
 
       {/* Add / Edit Student Modal */}
       {(isAddOpen || isEditOpen) && (

@@ -2,13 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { 
   Users, Search, Filter, Plus, Edit2, 
   UserCheck, UserX, Building2, ShieldCheck, 
-  X, Check, AlertCircle, RefreshCw, Mail, Phone
+  X, Check, AlertCircle, RefreshCw, Mail, Phone, Upload
 } from 'lucide-react';
 import { 
   apiGetAdminFaculty, apiCreateAdminFaculty, 
   apiUpdateAdminFaculty, apiToggleUserStatus 
 } from '../../services/api';
 import { useToast } from '../../components/Toast';
+import { AdminBulkUpload } from '../../components/AdminBulkUpload';
 
 export const AdminFaculty: React.FC = () => {
   const { showToast } = useToast();
@@ -21,6 +22,7 @@ export const AdminFaculty: React.FC = () => {
   const [role, setRole] = useState('');
   const [department, setDepartment] = useState('');
   const [status, setStatus] = useState('');
+  const [activeTab, setActiveTab] = useState<'roster' | 'bulk_upload'>('roster');
 
   // Modals
   const [isAddOpen, setIsAddOpen] = useState(false);
@@ -154,7 +156,7 @@ export const AdminFaculty: React.FC = () => {
     <div className="space-y-6">
       
       {/* Header & Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200/90 shadow-sm">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200/90 shadow-sm">
         <div>
           <div className="flex items-center gap-2">
             <div className="p-2 rounded-xl bg-indigo-50 text-indigo-600">
@@ -167,17 +169,57 @@ export const AdminFaculty: React.FC = () => {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={handleOpenAdd}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-all shadow-md shadow-amber-600/20 cursor-pointer self-start sm:self-auto"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Add New Faculty Member</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2.5">
+          {/* Tab Switcher */}
+          <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200/80">
+            <button
+              type="button"
+              onClick={() => setActiveTab('roster')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'roster'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Faculty Roster ({facultyList.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('bulk_upload')}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'bulk_upload'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Upload className="w-3.5 h-3.5 text-amber-600" />
+              <span>Bulk Upload Faculty</span>
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleOpenAdd}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-all shadow-md shadow-amber-600/20 cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Add Faculty</span>
+          </button>
+        </div>
       </div>
 
-      {/* Filter and Search */}
+      {activeTab === 'bulk_upload' && (
+        <AdminBulkUpload
+          entityType="faculty"
+          onSuccess={loadFaculty}
+          onSwitchToRoster={() => setActiveTab('roster')}
+        />
+      )}
+
+      {/* Tab 1: Faculty Roster */}
+      {activeTab === 'roster' && (
+        <div className="space-y-6">
+          {/* Filter and Search */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-sm space-y-3">
         <form onSubmit={handleSearchSubmit} className="flex flex-col sm:flex-row gap-3">
           <div className="relative flex-1">
@@ -339,6 +381,8 @@ export const AdminFaculty: React.FC = () => {
           </table>
         </div>
       </div>
+    </div>
+  )}
 
       {/* Add / Edit Faculty Modal */}
       {(isAddOpen || isEditOpen) && (
