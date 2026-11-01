@@ -29,26 +29,6 @@ class NotificationModel:
             if not recipient_email and raw_uid and '@' in str(raw_uid):
                 recipient_email = str(raw_uid).strip().lower()
 
-            if not resolved_uid and recipient_email:
-                u = session.query(User).filter(User.email.ilike(recipient_email)).first()
-                if u:
-                    resolved_uid = u.id
-
-            related_req_id = data.get('related_request_id') or data.get('request_id')
-            if not resolved_uid and related_req_id:
-                from backend.models.db_models import ODRequest
-                req = session.query(ODRequest).filter(ODRequest.id == str(related_req_id)).first()
-                if req and req.student_id:
-                    resolved_uid = req.student_id
-
-            if not resolved_uid:
-                fallback_u = session.query(User).first()
-                if fallback_u:
-                    resolved_uid = fallback_u.id
-
-            if not resolved_uid:
-                return None
-
             record = Notification(
                 id=notif_id,
                 user_id=resolved_uid,
@@ -65,7 +45,7 @@ class NotificationModel:
                 retry_count=int(data.get('retry_count', 0)),
                 error_details=data.get('error_details'),
                 provider_message_id=data.get('provider_message_id'),
-                related_request_id=related_req_id,
+                related_request_id=data.get('related_request_id') or data.get('request_id'),
                 created_at=created_dt,
                 updated_at=created_dt,
             )
