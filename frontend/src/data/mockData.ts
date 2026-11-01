@@ -1240,7 +1240,8 @@ export const syncODRequestsFromBackend = async (): Promise<ODRequest[]> => {
 
 export const saveODRequest = (
   newRequestData: Omit<ODRequest, 'id' | 'status' | 'approvalStage' | 'stages' | 'createdAt'>, 
-  fileObj?: File | null
+  fileObj?: File | null,
+  posterObj?: File | null
 ): ODRequest => {
   if (!fileObj && !newRequestData.documentUrl) {
     throw new Error('OD Letter or Supporting Document is mandatory. You cannot submit an OD request without uploading an event brochure, invitation letter, or registration proof.');
@@ -1315,7 +1316,8 @@ export const saveODRequest = (
 
 export const saveODRequestAsync = async (
   newRequestData: Omit<ODRequest, 'id' | 'status' | 'approvalStage' | 'stages' | 'createdAt'>,
-  fileObj?: File | null
+  fileObj?: File | null,
+  posterObj?: File | null
 ): Promise<{ success: boolean; request?: ODRequest; error?: string }> => {
   if (!fileObj && !newRequestData.documentUrl) {
     return {
@@ -1339,9 +1341,13 @@ export const saveODRequestAsync = async (
     formData.append('toTime', newRequestData.toTime || '17:00');
     formData.append('reason', newRequestData.reason);
     formData.append('description', newRequestData.description || '');
+    formData.append('isReviewed', 'true');
     
     if (fileObj) {
       formData.append('od_letter', fileObj);
+    }
+    if (posterObj) {
+      formData.append('event_poster', posterObj);
     }
 
     const headers: Record<string, string> = {};
@@ -1742,6 +1748,45 @@ export const verifyCertificateByFaculty = (
 
 export const simulateVerifyCertificate = (certId: string, status: 'Verified' | 'Rejected'): void => {
   verifyCertificateByFaculty(certId, status);
+};
+
+export const extendCertificateDeadlinesMock = (
+  requestIds: string[],
+  newDeadline: string,
+  faculty?: Faculty,
+  reason?: string
+): { updatedCount: number; updatedIds: string[] } => {
+  const reqs = getODRequests();
+  const fac = faculty || getCurrentFaculty();
+  const updatedIds: string[] = [];
+
+  requestIds.forEach(id => {
+    const req = reqs.find(r => r.id === id);
+    if (!req) return;
+    // Do not extend if already uploaded or verified
+    if (req.certificateStatus === 'Verified' || req.certificateStatus === 'Pending Verification' || req.certificateUrl) {
+      return;
+    }
+    req.certificateDeadline = newDeadline;
+    if (req.certificateStatus === 'Deadline Expired' || req.status === 'Rejected') {
+      req.status = 'HOD Approved - Certificate Pending';
+      req.approvalStage = 'Certificate Pending';
+      req.certificateStatus = 'Pending Upload';
+      req.rejectionReason = undefined;
+    }
+    updatedIds.push(req.id);
+    addNotification(
+      `Certificate submission deadline extended to ${newDeadline} by Class Incharge ${fac.name}.`,
+      'info',
+      req.id
+    );
+  });
+
+  localStorage.setItem(KEYS.REQUESTS, JSON.stringify(reqs));
+  window.dispatchEvent(new CustomEvent('odStateUpdated'));
+  window.dispatchEvent(new CustomEvent('odFacultyStateUpdated'));
+
+  return { updatedCount: updatedIds.length, updatedIds };
 };
 
 // ==========================================

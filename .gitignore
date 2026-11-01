@@ -66,8 +66,10 @@ backend/od_tracking.db
 # ── Uploaded files (runtime generated) ───────────────────────────────────────
 backend/uploads/od_letters/*
 backend/uploads/certificates/*
+backend/uploads/event_posters/*
 !backend/uploads/od_letters/.gitkeep
 !backend/uploads/certificates/.gitkeep
+!backend/uploads/event_posters/.gitkeep
 
 # ── Editor directories and files ──────────────────────────────────────────────
 .vscode/

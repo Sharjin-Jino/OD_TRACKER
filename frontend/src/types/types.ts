@@ -135,6 +135,7 @@ export interface ODRequest {
   description: string;
   documentUrl: string | null;
   odLetterUrl?: string | null;
+  eventPosterUrl?: string | null;
   certificateStatus?: CertificateVerificationStatus;
   certificateUrl?: string | null;
   eventStartDatetime?: string;

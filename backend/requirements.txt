@@ -28,3 +28,9 @@ gunicorn>=21.2.0
 
 # ── Optional: In-memory demo mode (when MONGO_URI is placeholder) ─────────────
 # mongomock>=4.1.2
+
+# ── AI Document Intelligence (Smart Apply OD) ─────────────────────────────────
+openai>=1.40.0
+pydantic>=2.0.0
+pymupdf>=1.24.0
+Pillow>=10.0.0
