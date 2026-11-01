@@ -232,7 +232,6 @@ class ODRequest(Base):
     reason = Column(Text)
     description = Column(Text)
     od_letter_url = Column(Text)
-    event_poster_url = Column(Text, nullable=True)
 
     # Status tracking
     status = Column(String(60), default='Pending')
@@ -292,7 +291,6 @@ class ODRequest(Base):
             'reason': self.reason,
             'description': self.description,
             'od_letter_url': self.od_letter_url,
-            'event_poster_url': getattr(self, 'event_poster_url', None),
             'status': self.status,
             'current_stage': self.current_stage,
             'certificate_status': self.certificate_status,
