@@ -57,9 +57,11 @@ def create_od_request():
     if request.is_json:
         data = request.get_json() or {}
         uploaded_file = None
+        uploaded_poster = None
     else:
         data = request.form.to_dict()
         uploaded_file = request.files.get('od_letter') or request.files.get('file') or request.files.get('document')
+        uploaded_poster = request.files.get('event_poster') or request.files.get('poster') or request.files.get('brochure')
 
     # Extract fields
     event_name = (data.get('eventName') or data.get('event_name') or '').strip()
@@ -92,6 +94,14 @@ def create_od_request():
         return jsonify({
             'success': False,
             'error': f"Missing required fields: {', '.join(missing_fields)}."
+        }), 400
+
+    # 1.1 Mandatory Student Review Confirmation Check
+    is_reviewed_val = data.get('isReviewed') or data.get('is_reviewed') or data.get('reviewed')
+    if is_reviewed_val is not None and str(is_reviewed_val).lower() in ('false', '0', 'no', ''):
+        return jsonify({
+            'success': False,
+            'error': "Student Review Confirmation is mandatory. You must review and confirm the extracted event details before submitting."
         }), 400
 
     # 2. Event Type Validation
@@ -150,14 +160,29 @@ def create_od_request():
             'error': "OD request duration cannot exceed 30 consecutive days."
         }), 400
 
-    # 4. Mandatory OD Letter / Supporting Document Validation & Handling
+    # 4. Mandatory OD Letter & Event Poster Validation & Handling (Dual Document Requirement)
     has_uploaded_file = bool(uploaded_file and getattr(uploaded_file, 'filename', None) and uploaded_file.filename.strip())
     doc_url = (data.get('od_letter_url') or data.get('documentUrl') or data.get('odLetterUrl') or '').strip()
+
+    has_uploaded_poster = bool(uploaded_poster and getattr(uploaded_poster, 'filename', None) and uploaded_poster.filename.strip())
+    poster_url = (data.get('event_poster_url') or data.get('eventPosterUrl') or data.get('posterUrl') or '').strip()
+
+    if not has_uploaded_file and not doc_url and not has_uploaded_poster and not poster_url:
+        return jsonify({
+            'success': False,
+            'error': "Both OD Letter and Event Poster are missing. Please upload both documents."
+        }), 400
 
     if not has_uploaded_file and not doc_url:
         return jsonify({
             'success': False,
-            'error': "OD Letter or Supporting Document is mandatory. You cannot submit an OD request without uploading an event brochure, invitation letter, or registration proof."
+            'error': "OD Letter is mandatory. Please upload an official OD request or permission letter."
+        }), 400
+
+    if not has_uploaded_poster and not poster_url:
+        return jsonify({
+            'success': False,
+            'error': "Event Poster is mandatory. Students must upload both the OD Letter and the Event Poster."
         }), 400
 
     document_url = None
@@ -190,7 +215,36 @@ def create_od_request():
     elif doc_url:
         document_url = doc_url
 
-    # 5. Insert into MongoDB using Authenticated Student Profile
+    event_poster_url = None
+    if has_uploaded_poster:
+        if not is_allowed_file(uploaded_poster.filename):
+            return jsonify({
+                'success': False,
+                'error': f"Invalid file type for Event Poster. Allowed formats are: {', '.join(Config.ALLOWED_EXTENSIONS)}."
+            }), 400
+
+        orig_poster = secure_filename(uploaded_poster.filename) or 'poster.png'
+        poster_ext = orig_poster.rsplit('.', 1)[1].lower() if '.' in orig_poster else 'png'
+        safe_poster_name = f"poster_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}.{poster_ext}"
+        poster_save_path = os.path.join(Config.EVENT_POSTERS_FOLDER, safe_poster_name)
+
+        os.makedirs(Config.EVENT_POSTERS_FOLDER, exist_ok=True)
+        uploaded_poster.save(poster_save_path)
+
+        try:
+            try:
+                from backend.services.blob_storage_service import blob_storage
+            except ImportError:
+                from services.blob_storage_service import blob_storage
+            blob_storage.upload_file('odletters', safe_poster_name, poster_save_path)
+        except Exception as blob_err:
+            pass
+
+        event_poster_url = f"/api/od-requests/uploads/event_posters/{safe_poster_name}"
+    elif poster_url:
+        event_poster_url = poster_url
+
+    # 5. Insert into Database using Authenticated Student Profile
     req_payload = {
         'student_id': active_user.get('id') or active_user.get('userId'),
         'student_reg_no': active_user.get('identifier'),
@@ -209,6 +263,7 @@ def create_od_request():
         'reason': reason,
         'description': description,
         'od_letter_url': document_url,
+        'event_poster_url': event_poster_url,
     }
 
     try:
@@ -418,6 +473,62 @@ def serve_od_letter(filename):
     
     return send_from_directory(folder, safe_name, as_attachment=as_attachment, download_name=safe_name)
 
+
+@od_requests_bp.route('/<request_id>/view-certificate', methods=['GET'])
+@login_required
+def view_verified_certificate(request_id):
+    """
+    Securely view/download the verified participation certificate for an OD request.
+    - Role and Ownership: Student can only view their own certificate; Faculty/Admin can view any.
+    - Strict Approval Verification: Certificate MUST be 'Verified' or 'Approved'.
+      An OD request being Approved does NOT automatically mean its certificate is approved.
+    - Streams the actual uploaded certificate file (PDF, PNG, JPG, JPEG, WEBP).
+    """
+    active_user = current_user
+    user_id = str(active_user.get('id') or active_user.get('identifier') or '')
+    user_ident = str(active_user.get('identifier') or '').lower()
+    user_role = str(active_user.get('role') or '').lower()
+
+    req = ODRequestModel.get_by_id(request_id)
+    if not req:
+        return jsonify({'success': False, 'error': 'OD request not found.'}), 404
+
+    # Ownership check for students
+    if user_role == 'student':
+        req_student_id = str(req.get('studentId') or req.get('student_id') or '')
+        req_student_reg = str(req.get('studentRegisterNo') or req.get('student_reg_no') or '').lower()
+        if req_student_id != user_id and req_student_reg != user_ident and req_student_reg != user_id.lower():
+            return jsonify({'success': False, 'error': 'Access denied: You can only view certificates for your own OD requests.'}), 403
+
+    # Strict Certificate Approval Check
+    cert_status = str(req.get('certificateStatus') or req.get('certificate_status') or '').strip().lower()
+    if cert_status not in ('verified', 'approved'):
+        if cert_status in ('pending verification', 'pending upload', 'submitted') or req.get('status') == 'Certificate Submitted':
+            return jsonify({
+                'success': False,
+                'error': 'Certificate is pending verification. It can only be viewed after verification by faculty.',
+                'certificateStatus': req.get('certificateStatus')
+            }), 403
+        elif cert_status in ('rejected', 'deadline expired'):
+            return jsonify({
+                'success': False,
+                'error': 'Certificate was rejected and cannot be viewed as an approved certificate.',
+                'certificateStatus': req.get('certificateStatus')
+            }), 403
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'No certificate has been uploaded or verified for this OD request.',
+                'certificateStatus': req.get('certificateStatus')
+            }), 404
+
+    cert_url = req.get('certificateUrl') or req.get('certificate_url')
+    if not cert_url or not str(cert_url).strip():
+        return jsonify({'success': False, 'error': 'Certificate file record not found.'}), 404
+
+    filename = os.path.basename(str(cert_url).strip())
+    return serve_certificate(filename)
+
 @od_requests_bp.route('/uploads/certificates/<filename>', methods=['GET'])
 def serve_certificate(filename):
     """Safely serve or download uploaded student participation certificates."""
@@ -463,4 +574,109 @@ def serve_certificate(filename):
             except Exception:
                 pass
     
+    return send_from_directory(folder, safe_name, as_attachment=as_attachment, download_name=safe_name)
+
+@od_requests_bp.route('/smart-extract', methods=['POST'])
+@role_required('Student')
+def smart_extract_documents():
+    """
+    Smart OD Application - Dual Document OCR & Extraction Endpoint:
+    Receives OD Letter and Event Poster files.
+    Performs OCR and text extraction, classifies documents, extracts structured event details,
+    cross-validates for date/venue/title conflicts, and computes extraction confidence scores.
+    """
+    od_file = request.files.get('od_letter') or request.files.get('file')
+    poster_file = request.files.get('event_poster') or request.files.get('poster')
+
+    if not od_file and not poster_file:
+        return jsonify({
+            'success': False,
+            'error': 'Both OD Letter and Event Poster are missing. Please upload both documents.'
+        }), 400
+
+    if not od_file:
+        return jsonify({
+            'success': False,
+            'error': 'OD Letter is missing. Both OD Letter and Event Poster are required for extraction.'
+        }), 400
+
+    if not poster_file:
+        return jsonify({
+            'success': False,
+            'error': 'Event Poster is missing. Both OD Letter and Event Poster are required for extraction.'
+        }), 400
+
+    if not is_allowed_file(od_file.filename):
+        return jsonify({
+            'success': False,
+            'error': f"Invalid file format for OD Letter. Allowed formats: {', '.join(Config.ALLOWED_EXTENSIONS)}."
+        }), 400
+
+    if not is_allowed_file(poster_file.filename):
+        return jsonify({
+            'success': False,
+            'error': f"Invalid file format for Event Poster. Allowed formats: {', '.join(Config.ALLOWED_EXTENSIONS)}."
+        }), 400
+
+    try:
+        try:
+            from backend.services.openai_extraction_service import OpenAIExtractionService
+        except ImportError:
+            from services.openai_extraction_service import OpenAIExtractionService
+
+        od_bytes = od_file.read()
+        poster_bytes = poster_file.read()
+
+        result = OpenAIExtractionService.extract_with_fallback(
+            od_file_bytes=od_bytes,
+            od_filename=secure_filename(od_file.filename) or 'od_letter.pdf',
+            poster_file_bytes=poster_bytes,
+            poster_filename=secure_filename(poster_file.filename) or 'poster.png'
+        )
+
+        return jsonify(result), 200
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f"Document extraction failed: {str(e)}"
+        }), 500
+
+
+@od_requests_bp.route('/uploads/event_posters/<filename>', methods=['GET'])
+def serve_event_poster(filename):
+    """Safely serve or download uploaded event posters and brochures."""
+    safe_name = secure_filename(filename)
+    as_attachment = request.args.get('download', '').lower() in ['true', '1', 'yes']
+
+    # 1. Try Azure Blob Storage container 'odletters' first
+    try:
+        try:
+            from backend.services.blob_storage_service import blob_storage
+        except ImportError:
+            from services.blob_storage_service import blob_storage
+
+        blob_data, content_type = blob_storage.download_file('odletters', safe_name)
+        if blob_data:
+            return send_file(
+                io.BytesIO(blob_data),
+                mimetype=content_type or 'application/octet-stream',
+                as_attachment=as_attachment,
+                download_name=safe_name
+            )
+    except Exception:
+        pass
+
+    # 2. Local disk fallback
+    os.makedirs(Config.EVENT_POSTERS_FOLDER, exist_ok=True)
+    file_path = os.path.join(Config.EVENT_POSTERS_FOLDER, safe_name)
+    folder = Config.EVENT_POSTERS_FOLDER
+
+    if not os.path.exists(file_path):
+        legacy_path = os.path.join(Config.BASE_DIR, 'uploads', 'event_posters', safe_name)
+        if os.path.exists(legacy_path):
+            folder = os.path.join(Config.BASE_DIR, 'uploads', 'event_posters')
+        else:
+            return jsonify({'success': False, 'error': 'Event poster file not found.'}), 404
+
     return send_from_directory(folder, safe_name, as_attachment=as_attachment, download_name=safe_name)

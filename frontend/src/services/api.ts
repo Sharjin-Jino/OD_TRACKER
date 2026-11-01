@@ -350,6 +350,109 @@ export async function apiResetPasswordOtp(payload: {
 /**
  * Create a new OD Request via Flask backend POST /api/od-requests
  */
+export interface SmartExtractionResult {
+  success: boolean;
+  engine?: string;
+  model?: string;
+  processingStatus?: 'success' | 'partial_success' | 'validation_failed' | 'different_events_detected';
+  extracted?: {
+    eventName?: string;
+    eventType?: string;
+    eventOrganizer?: string;
+    venue?: string;
+    fromDate?: string;
+    toDate?: string;
+    fromTime?: string;
+    toTime?: string;
+    reason?: string;
+    description?: string;
+  };
+  fieldConfidence?: Record<string, 'high' | 'medium' | 'low'>;
+  fieldSources?: Record<string, { source: string; confidence: string }>;
+  conflicts?: Array<{
+    field: string;
+    label: string;
+    odLetterValue: string;
+    posterValue: string;
+    message: string;
+  }>;
+  documentValidation?: {
+    isValidDocumentPair: boolean;
+    isODLetterValid: boolean;
+    isPosterValid: boolean;
+    hasSufficientInformation: boolean;
+    summary: string;
+  };
+  sameEventValidation?: {
+    isSameEvent: boolean;
+    confidence: number;
+    explanation: string;
+  };
+  documentClassification?: {
+    odLetter: { valid: boolean; detectedType: string; confidence: number };
+    eventPoster: { valid: boolean; detectedType: string; confidence: number };
+    isSwapped: boolean;
+  };
+  missingFields?: string[];
+  requiresStudentReview?: boolean;
+  odLetterSummary?: { fileName: string; characterCount: number; hasText: boolean };
+  posterSummary?: { fileName: string; characterCount: number; hasText: boolean };
+  error?: string;
+}
+
+/**
+ * OpenAI-Powered Dual Document Intelligence Extraction via POST /api/od/extract-documents
+ * (with automatic fallback to POST /api/od-requests/smart-extract)
+ */
+export async function apiSmartExtractDocuments(
+  odLetterFile: File,
+  eventPosterFile: File,
+  token?: string
+): Promise<SmartExtractionResult> {
+  try {
+    const formData = new FormData();
+    formData.append('od_letter', odLetterFile);
+    formData.append('event_poster', eventPosterFile);
+
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    // Try primary new OpenAI extraction endpoint first
+    let res = await fetch(`${API_BASE}/od/extract-documents`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    // Fallback to legacy endpoint if 404
+    if (res.status === 404) {
+      res = await fetch(`${API_BASE}/od-requests/smart-extract`, {
+        method: 'POST',
+        headers,
+        body: formData,
+      });
+    }
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.success === false) {
+      return {
+        success: false,
+        error: data.error || 'Failed to extract information from documents.',
+      };
+    }
+
+    return data;
+  } catch (err: any) {
+    console.warn('apiSmartExtractDocuments network error:', err);
+    return {
+      success: false,
+      error: 'Unable to reach backend extraction service. Please verify Flask backend is running on port 5000.',
+    };
+  }
+}
+
 export async function apiCreateODRequest(
   payload: FormData | Record<string, any>,
   token?: string
@@ -1282,6 +1385,8 @@ export async function apiGetClassInchargeCertificates(token?: string): Promise<{
   success: boolean;
   certificates: any[];
   count?: number;
+  pending_uploads?: any[];
+  pending_upload_count?: number;
   error?: string;
 }> {
   try {
@@ -1293,12 +1398,86 @@ export async function apiGetClassInchargeCertificates(token?: string): Promise<{
     const res = await fetch(`${API_BASE}/class-incharge/certificates`, { method: 'GET', headers });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      return { success: false, certificates: [], error: data.error || 'Failed to fetch certificates.' };
+      return { success: false, certificates: [], pending_uploads: [], error: data.error || 'Failed to fetch certificates.' };
     }
-    return { success: true, certificates: data.certificates || [], count: data.count || 0 };
+    return {
+      success: true,
+      certificates: data.certificates || [],
+      count: data.count || 0,
+      pending_uploads: data.pending_uploads || [],
+      pending_upload_count: data.pending_upload_count || 0,
+    };
   } catch (err) {
     console.warn('apiGetClassInchargeCertificates network error:', err);
-    return { success: false, certificates: [], error: 'Unable to reach backend server.' };
+    return { success: false, certificates: [], pending_uploads: [], error: 'Unable to reach backend server.' };
+  }
+}
+
+/**
+ * Bulk Certificate Deadline Extension via POST /api/class-incharge/certificates/extend-deadline
+ */
+export async function apiExtendCertificateDeadline(
+  requestIds: string[],
+  newDeadline: string,
+  reason?: string,
+  token?: string
+): Promise<{
+  success: boolean;
+  message?: string;
+  updatedCount?: number;
+  updatedIds?: string[];
+  updatedRecords?: any[];
+  failedCount?: number;
+  failed?: any[];
+  newDeadline?: string;
+  error?: string;
+}> {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) {
+      headers['Authorization'] = `Bearer ${activeToken}`;
+    }
+    const res = await fetch(`${API_BASE}/class-incharge/certificates/extend-deadline`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ requestIds, newDeadline, reason: reason || '' }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { success: false, error: data.error || 'Failed to extend deadline.', failed: data.failed };
+    }
+    return data;
+  } catch (err: any) {
+    console.warn('apiExtendCertificateDeadline network error:', err);
+    return { success: false, error: err.message || 'Network error extending deadline.' };
+  }
+}
+
+/**
+ * Retrieve requests awaiting certificate upload via GET /api/class-incharge/certificates/pending-upload
+ */
+export async function apiGetClassInchargePendingUploads(token?: string): Promise<{
+  success: boolean;
+  requests: any[];
+  count?: number;
+  error?: string;
+}> {
+  try {
+    const headers: Record<string, string> = {};
+    const activeToken = resolveStoredToken(token);
+    if (activeToken) {
+      headers['Authorization'] = `Bearer ${activeToken}`;
+    }
+    const res = await fetch(`${API_BASE}/class-incharge/certificates/pending-upload`, { method: 'GET', headers });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { success: false, requests: [], error: data.error || 'Failed to fetch pending uploads.' };
+    }
+    return { success: true, requests: data.requests || [], count: data.count || 0 };
+  } catch (err) {
+    console.warn('apiGetClassInchargePendingUploads network error:', err);
+    return { success: false, requests: [], error: 'Unable to reach backend server.' };
   }
 }
 

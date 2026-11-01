@@ -68,6 +68,7 @@ class Config:
 
     OD_LETTERS_FOLDER = os.path.join(UPLOAD_FOLDER, 'od_letters')
     CERTIFICATES_FOLDER = os.path.join(UPLOAD_FOLDER, 'certificates')
+    EVENT_POSTERS_FOLDER = os.path.join(UPLOAD_FOLDER, 'event_posters')
 
     # ── Azure Blob Storage Configuration ──────────────────────────────────────
     AZURE_STORAGE_ACCOUNT_NAME = os.environ.get('AZURE_STORAGE_ACCOUNT_NAME', 'odtrackerstorage')
@@ -120,4 +121,8 @@ class Config:
     RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
     RESEND_FROM_EMAIL = os.environ.get('RESEND_FROM_EMAIL', os.environ.get('RESEND_SENDER_EMAIL', os.environ.get('MAIL_DEFAULT_SENDER', 'onboarding@resend.dev')))
     RESEND_FROM_NAME = os.environ.get('RESEND_FROM_NAME', os.environ.get('RESEND_SENDER_NAME', 'OD Tracking Application'))
+
+    # ── OpenAI Configuration for Smart Apply OD ───────────────────────────────
+    OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
+    OPENAI_MODEL = os.environ.get('OPENAI_MODEL', 'gpt-4o-mini')
 

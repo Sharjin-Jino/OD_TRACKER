@@ -325,6 +325,18 @@ class SQLServerDB:
     def connect(cls):
         """Initialize and verify SQLAlchemy engine connected to Microsoft SQL Server / Azure SQL."""
         if cls._is_connected and cls._engine is not None:
+            # Ensure schema compatibility for Smart OD (event_poster_url)
+            try:
+                with cls._engine.connect() as check_conn:
+                    has_col = check_conn.execute(
+                        text("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'od_requests' AND COLUMN_NAME = 'event_poster_url'")
+                    ).scalar()
+                    if has_col == 0:
+                        check_conn.execute(text("ALTER TABLE od_requests ADD event_poster_url NVARCHAR(MAX) NULL"))
+                        check_conn.commit()
+            except Exception as sch_err:
+                print(f"[!] Schema check notice: {sch_err}")
+
             return cls._engine
 
         try:
@@ -401,6 +413,7 @@ class SQLServerDB:
             print(
                 f"[+] {db_label} connected: Database '{cls._database_name}' on '{cls._server_name}' (Auth: {cls._auth_mode})"
             )
+            cls._ensure_schema()
             return cls._engine
 
         except Exception as e:
@@ -462,6 +475,7 @@ class SQLServerDB:
                         print(
                             f"[!] Local Development Fallback: Connected to Microsoft SQL Server '{cls._database_name}' on '{srv}'."
                         )
+                        cls._ensure_schema()
                         return cls._engine
                     except Exception:
                         continue
@@ -469,6 +483,22 @@ class SQLServerDB:
             cls._is_connected = False
             cls._connection_error = safe_err
             return None
+
+    @classmethod
+    def _ensure_schema(cls):
+        """Ensure schema compatibility (event_poster_url) on active engine."""
+        if cls._engine is None:
+            return
+        try:
+            with cls._engine.connect() as check_conn:
+                has_col = check_conn.execute(
+                    text("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'od_requests' AND COLUMN_NAME = 'event_poster_url'")
+                ).scalar()
+                if has_col == 0:
+                    check_conn.execute(text("ALTER TABLE od_requests ADD event_poster_url NVARCHAR(MAX) NULL"))
+                    check_conn.commit()
+        except Exception as sch_err:
+            print(f"[!] Schema check notice: {sch_err}")
 
     @classmethod
     def ping(cls) -> bool:

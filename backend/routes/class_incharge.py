@@ -1075,7 +1075,120 @@ def get_class_incharge_certificates():
                     'upload_date': to_iso(req.certificate_submitted_at or req.updated_at),
                 })
 
-    return jsonify({'success': True, 'certificates': cert_list, 'count': len(cert_list)}), 200
+        # Also retrieve pending certificate uploads awaiting student submission
+        pending_uploads = ODRequestModel.list_pending_certificate_uploads_for_ci(ci_user)
+
+    return jsonify({
+        'success': True,
+        'certificates': cert_list,
+        'count': len(cert_list),
+        'pending_uploads': pending_uploads,
+        'pending_upload_count': len(pending_uploads)
+    }), 200
+
+
+@class_incharge_bp.route('/certificates/pending-upload', methods=['GET'])
+@role_required('Class Incharge', 'Admin')
+def get_class_incharge_pending_certificate_uploads():
+    """Retrieve OD requests belonging to assigned students whose certificates have not yet been uploaded."""
+    ci_user = current_user
+    pending_uploads = ODRequestModel.list_pending_certificate_uploads_for_ci(ci_user)
+    return jsonify({
+        'success': True,
+        'requests': pending_uploads,
+        'count': len(pending_uploads)
+    }), 200
+
+
+@class_incharge_bp.route('/certificates/extend-deadline', methods=['POST'])
+@role_required('Class Incharge', 'Admin')
+def extend_certificate_deadlines():
+    """
+    Bulk Certificate Deadline Extension endpoint.
+    - Accessible only by authorized Class Incharge (and Admin).
+    - Validates request IDs, future deadline, department assignment, and un-uploaded status.
+    - Persists updated deadlines in existing database and logs full audit in ODHistory.
+    """
+    ci_user = current_user
+    data = request.get_json(silent=True) or {}
+
+    request_ids = data.get('requestIds') or data.get('request_ids') or []
+    if isinstance(request_ids, str):
+        request_ids = [request_ids]
+
+    if not request_ids or not isinstance(request_ids, list):
+        return jsonify({
+            'success': False,
+            'error': 'Please select at least one eligible student OD request to extend deadline.'
+        }), 400
+
+    raw_deadline = data.get('newDeadline') or data.get('new_deadline') or data.get('deadline')
+    if not raw_deadline:
+        return jsonify({
+            'success': False,
+            'error': 'A new certificate submission deadline date and time is required.'
+        }), 400
+
+    new_deadline = None
+    # Try parsing multiple common datetime formats
+    for fmt in ('%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M', '%Y-%m-%d'):
+        try:
+            new_deadline = datetime.strptime(str(raw_deadline).strip().replace('Z', ''), fmt)
+            break
+        except ValueError:
+            pass
+
+    if not new_deadline:
+        try:
+            from dateutil.parser import parse as parse_date
+            new_deadline = parse_date(str(raw_deadline))
+            if new_deadline and new_deadline.tzinfo is not None:
+                new_deadline = new_deadline.replace(tzinfo=None)
+        except Exception:
+            return jsonify({
+                'success': False,
+                'error': f"Invalid deadline format '{raw_deadline}'. Please provide a valid date/time."
+            }), 400
+
+    if new_deadline <= datetime.now():
+        return jsonify({
+            'success': False,
+            'error': 'The new deadline must be set to a future date and time.'
+        }), 400
+
+    reason = (data.get('reason') or data.get('remarks') or '').strip()
+
+    summary, err = ODRequestModel.extend_certificate_deadlines(
+        request_ids=request_ids,
+        new_deadline=new_deadline,
+        ci_user=ci_user,
+        reason=reason
+    )
+
+    if err and summary.get('updatedCount', 0) == 0:
+        return jsonify({
+            'success': False,
+            'error': err,
+            'failed': summary.get('failed', [])
+        }), 400
+
+    message = f"Certificate submission deadline successfully extended to {summary['newDeadline']} for {summary['updatedCount']} student(s)."
+    if summary.get('failedCount', 0) > 0:
+        message += f" ({summary['failedCount']} record(s) could not be updated)."
+
+    return jsonify({
+        'success': True,
+        'message': message,
+        'updatedCount': summary['updatedCount'],
+        'updatedIds': summary['updatedIds'],
+        'updated_count': summary['updatedCount'],
+        'updated_ids': summary['updatedIds'],
+        'updatedRecords': summary['updatedRecords'],
+        'failedCount': summary['failedCount'],
+        'failed': summary['failed'],
+        'newDeadline': summary['newDeadline'],
+        'newDeadlineIso': summary['newDeadlineIso']
+    }), 200
 
 
 @class_incharge_bp.route('/od-requests/<request_id>/verify-certificate', methods=['POST'])
